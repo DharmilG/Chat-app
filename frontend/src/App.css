@@ -35,8 +35,7 @@
   color: var(--text);
 }
 
-.room-card,
-.chat-panel {
+.room-card {
   max-width: 620px;
   margin: 40px auto 0;
   padding: 28px;
@@ -130,12 +129,18 @@ button:hover {
 }
 
 .chat-section {
-  display: block;
-  padding-top: 8vh;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 100svh;
+  padding: 8vh 20px 32px;
 }
 
 .chat-panel {
-  width: min(100%, 760px);
+  width: 100%;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   box-sizing: border-box;
   margin: 0 auto;
 }
@@ -158,10 +163,12 @@ button:hover {
 
 .messages {
   display: grid;
-  min-height: 300px;
+  min-height: 0;
+  flex: 1;
   align-content: start;
   gap: 12px;
-  margin: 32px 0;
+  overflow-y: auto;
+  margin: 32px 0 16px;
   padding: 16px;
   border-radius: 10px;
   background: var(--code-bg);
@@ -199,6 +206,10 @@ button:hover {
   .chat-panel {
     margin-top: 32px;
     padding: 20px;
+  }
+
+  .chat-section {
+    padding-bottom: 20px;
   }
 
   .room-form-row,
