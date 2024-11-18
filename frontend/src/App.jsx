@@ -115,7 +115,9 @@ function ChatRoom({ roomCode }) {
   useEffect(() => {
     const socket = io(socketUrl)
     socketRef.current = socket
-    socket.emit('join-room', { roomCode, displayName })
+    socket.on('connect', () => {
+      socket.emit('join-room', { roomCode, displayName })
+    })
     socket.on('chat-message', (chatMessage) => {
       setMessages((currentMessages) => [...currentMessages, chatMessage])
     })
@@ -131,10 +133,14 @@ function ChatRoom({ roomCode }) {
     const text = message.trim()
     if (!text) return
 
-    socketRef.current?.emit('chat-message', {
+    if (!socketRef.current?.connected) return
+
+    socketRef.current.emit('chat-message', {
       roomCode,
       displayName,
       message: text,
+    }, (chatMessage) => {
+      setMessages((currentMessages) => [...currentMessages, chatMessage])
     })
     setMessage('')
   }

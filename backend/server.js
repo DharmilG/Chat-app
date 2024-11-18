@@ -33,7 +33,7 @@ io.on("connection", (socket)=>{
         }
     });
 
-    socket.on("chat-message", ({ roomCode, displayName, message }) => {
+    socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
         if (
             typeof roomCode !== "string" ||
             typeof displayName !== "string" ||
@@ -54,7 +54,10 @@ io.on("connection", (socket)=>{
         const messages = roomMessages.get(normalizedRoomCode) || [];
         messages.push(chatMessage);
         roomMessages.set(normalizedRoomCode, messages);
-        io.to(normalizedRoomCode).emit("chat-message", chatMessage);
+        socket.to(normalizedRoomCode).emit("chat-message", chatMessage);
+        if (typeof acknowledge === "function") {
+            acknowledge(chatMessage);
+        }
     })
 
     socket.on("disconnect", () => {
