@@ -183,11 +183,16 @@ button:hover {
 }
 
 .message {
+  align-self: start;
   width: fit-content;
   max-width: 80%;
   padding: 10px 14px;
   border-radius: 10px;
   background: var(--bg);
+}
+
+.message-own {
+  align-self: end;
 }
 
 .message strong {

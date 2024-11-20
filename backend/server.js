@@ -47,6 +47,7 @@ io.on("connection", (socket)=>{
         if (socket.data.roomCode !== normalizedRoomCode) return;
 
         const chatMessage = {
+            senderId: socket.id,
             displayName: displayName.trim(),
             message: message.trim(),
             timestamp: Date.now(),

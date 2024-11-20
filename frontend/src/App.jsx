@@ -108,6 +108,7 @@ function ChatRoom({ roomCode }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
   const socketRef = useRef(null)
+  const [socketId, setSocketId] = useState(null)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
   )
@@ -116,6 +117,7 @@ function ChatRoom({ roomCode }) {
     const socket = io(socketUrl)
     socketRef.current = socket
     socket.on('connect', () => {
+      setSocketId(socket.id)
       socket.emit('join-room', { roomCode, displayName })
     })
     socket.on('chat-message', (chatMessage) => {
@@ -125,6 +127,7 @@ function ChatRoom({ roomCode }) {
     return () => {
       socket.disconnect()
       socketRef.current = null
+      setSocketId(null)
     }
   }, [displayName, roomCode])
 
@@ -170,8 +173,19 @@ function ChatRoom({ roomCode }) {
             <p className="empty-messages">No messages yet. Start the conversation.</p>
           ) : (
             messages.map((chatMessage, index) => (
-              <article className="message" key={`${chatMessage.timestamp}-${index}`}>
-                <strong>{chatMessage.displayName}</strong>
+              <article
+                className={`message ${
+                  chatMessage.senderId === socketId
+                    ? 'message-own'
+                    : ''
+                }`}
+                key={`${chatMessage.timestamp}-${index}`}
+              >
+                <strong>
+                  {chatMessage.senderId === socketId
+                    ? 'You'
+                    : chatMessage.displayName}
+                </strong>
                 <p>{chatMessage.message}</p>
               </article>
             ))
