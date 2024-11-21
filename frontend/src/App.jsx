@@ -108,7 +108,6 @@ function ChatRoom({ roomCode }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
   const socketRef = useRef(null)
-  const [socketId, setSocketId] = useState(null)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
   )
@@ -117,7 +116,6 @@ function ChatRoom({ roomCode }) {
     const socket = io(socketUrl)
     socketRef.current = socket
     socket.on('connect', () => {
-      setSocketId(socket.id)
       socket.emit('join-room', { roomCode, displayName })
     })
     socket.on('chat-message', (chatMessage) => {
@@ -127,7 +125,6 @@ function ChatRoom({ roomCode }) {
     return () => {
       socket.disconnect()
       socketRef.current = null
-      setSocketId(null)
     }
   }, [displayName, roomCode])
 
@@ -143,7 +140,10 @@ function ChatRoom({ roomCode }) {
       displayName,
       message: text,
     }, (chatMessage) => {
-      setMessages((currentMessages) => [...currentMessages, chatMessage])
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        { ...chatMessage, isOwn: true },
+      ])
     })
     setMessage('')
   }
@@ -175,16 +175,12 @@ function ChatRoom({ roomCode }) {
             messages.map((chatMessage, index) => (
               <article
                 className={`message ${
-                  chatMessage.senderId === socketId
-                    ? 'message-own'
-                    : ''
+                  chatMessage.isOwn ? 'message-own' : ''
                 }`}
                 key={`${chatMessage.timestamp}-${index}`}
               >
                 <strong>
-                  {chatMessage.senderId === socketId
-                    ? 'You'
-                    : chatMessage.displayName}
+                  {chatMessage.isOwn ? 'You' : chatMessage.displayName}
                 </strong>
                 <p>{chatMessage.message}</p>
               </article>

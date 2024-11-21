@@ -184,6 +184,7 @@ button:hover {
 
 .message {
   align-self: start;
+  justify-self: start;
   width: fit-content;
   max-width: 80%;
   padding: 10px 14px;
@@ -193,6 +194,7 @@ button:hover {
 
 .message-own {
   align-self: end;
+  justify-self: end;
 }
 
 .message strong {
