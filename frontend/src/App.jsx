@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import io from 'socket.io-client'
 import './App.css'
+import ThemeToggle from './components/ThemeToggle'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
 
@@ -15,8 +16,10 @@ function navigateToRoom(roomCode) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-function LandingPage() {
-  const [displayName, setDisplayName] = useState('')
+function LandingPage({ theme, onToggleTheme }) {
+  const [displayName, setDisplayName] = useState(
+    () => sessionStorage.getItem('chatDisplayName') || '',
+  )
   const [roomCode, setRoomCode] = useState('')
   const [error, setError] = useState('')
 
@@ -48,37 +51,120 @@ function LandingPage() {
   }
 
   return (
-    <main className="hero-section">
-      <section className="hero-content" aria-labelledby="hero-title">
+    <main className="home-page">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">T</span>
+          <div>
+            <strong>Talk in the moment</strong>
+            <span>Private conversations, nothing permanent.</span>
+          </div>
+        </div>
+        <div className="header-actions">
+          <span className="availability">
+            <span className="status-dot" aria-hidden="true" />
+            Ready to connect
+          </span>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          <button className="icon-button" type="button" disabled>
+            Settings
+          </button>
+        </div>
+      </header>
+
+      <section className="home-intro" aria-labelledby="hero-title">
+        <p className="hero-eyebrow">No accounts. No history.</p>
         <h1 id="hero-title">Talk in the moment</h1>
         <p className="hero-description">
-          Create a room, share its short code, and chat without accounts or
-          message history.
+          Connect privately, share only what matters, and leave nothing
+          behind when the conversation ends.
         </p>
+      </section>
 
-        <div className="room-card">
-          <form className="room-form" onSubmit={createRoom}>
-            <label htmlFor="display-name">Display name</label>
-            <div className="room-form-row">
-              <input
-                id="display-name"
-                name="displayName"
-                type="text"
-                placeholder="Enter your name"
-                value={displayName}
-                onChange={(event) => {
-                  setDisplayName(event.target.value)
-                  setError('')
-                }}
-              />
-              <button type="submit">Create a room</button>
-            </div>
-          </form>
-
-          <div className="room-divider" aria-hidden="true">
-            <span>or join one</span>
+      <section className="identity-card" aria-labelledby="identity-title">
+        <div className="section-heading">
+          <div>
+            <p className="section-kicker">Your temporary identity</p>
+            <h2 id="identity-title">How should people see you?</h2>
           </div>
+          <span className="identity-badge">Session only</span>
+        </div>
+        <div className="identity-form-row">
+          <label className="sr-only" htmlFor="display-name">Display name</label>
+          <input
+            id="display-name"
+            name="displayName"
+            type="text"
+            placeholder="Enter a display name"
+            value={displayName}
+            onChange={(event) => {
+              setDisplayName(event.target.value)
+              setError('')
+            }}
+          />
+          <span className="identity-preview">
+            {displayName.trim() ? displayName.trim().charAt(0).toUpperCase() : '?'}
+          </span>
+        </div>
+        <p className="helper-text">
+          This name is used only for the current chat session. There is no
+          account to create.
+        </p>
+      </section>
 
+      <section className="action-grid" aria-label="Connection options">
+        <article className="action-card action-card-primary">
+          <div className="action-icon" aria-hidden="true">↗</div>
+          <p className="section-kicker">Private conversation</p>
+          <h2>Start a new private chat</h2>
+          <p>
+            Find someone who is currently available and start a direct
+            conversation.
+          </p>
+          <button className="primary-action" type="button" disabled>
+            New private chat
+          </button>
+          <span className="availability-note">User discovery is coming next</span>
+        </article>
+
+        <article className="action-card">
+          <div className="action-icon" aria-hidden="true">⌁</div>
+          <p className="section-kicker">Local network</p>
+          <h2>Connect nearby</h2>
+          <p>
+            Local peer discovery will let people on the same network connect
+            directly.
+          </p>
+          <div className="unavailable-state">
+            <span className="status-dot status-dot-muted" aria-hidden="true" />
+            <span>Local discovery is not available yet</span>
+          </div>
+        </article>
+      </section>
+
+      <section className="dashboard-grid">
+        <article className="dashboard-card">
+          <div className="section-heading">
+            <div>
+              <p className="section-kicker">People nearby</p>
+              <h2>Online users</h2>
+            </div>
+            <span className="count-badge">0 online</span>
+          </div>
+          <div className="empty-state">
+            <div className="empty-state-icon" aria-hidden="true">○</div>
+            <strong>No one is available right now</strong>
+            <p>Online users will appear here when discovery is connected.</p>
+          </div>
+        </article>
+
+        <article className="dashboard-card join-card">
+          <div className="section-heading">
+            <div>
+              <p className="section-kicker">Have an invitation?</p>
+              <h2>Join an existing room</h2>
+            </div>
+          </div>
           <form className="room-form" onSubmit={joinRoom}>
             <label htmlFor="room-code">Room code</label>
             <div className="room-form-row">
@@ -86,7 +172,7 @@ function LandingPage() {
                 id="room-code"
                 name="roomCode"
                 type="text"
-                placeholder="Enter room code"
+                placeholder="Enter short code"
                 value={roomCode}
                 onChange={(event) => {
                   setRoomCode(event.target.value)
@@ -96,9 +182,12 @@ function LandingPage() {
               <button type="submit">Join room</button>
             </div>
           </form>
-
+          <button className="text-button" type="button" onClick={createRoom}>
+            Create a new room instead
+          </button>
+          <p className="helper-text">Room messages are live and are not saved.</p>
           {error && <p className="form-error" role="alert">{error}</p>}
-        </div>
+        </article>
       </section>
     </main>
   )
@@ -205,6 +294,13 @@ function ChatRoom({ roomCode }) {
 
 function App() {
   const [roomCode, setRoomCode] = useState(getRoomCode)
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = localStorage.getItem('chat-theme')
+    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light'
+  })
 
   useEffect(() => {
     const handleNavigation = () => setRoomCode(getRoomCode())
@@ -212,7 +308,18 @@ function App() {
     return () => window.removeEventListener('popstate', handleNavigation)
   }, [])
 
-  return roomCode ? <ChatRoom roomCode={roomCode} /> : <LandingPage />
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('chat-theme', theme)
+  }, [theme])
+
+  function toggleTheme() {
+    setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')
+  }
+
+  return roomCode
+    ? <ChatRoom roomCode={roomCode} />
+    : <LandingPage theme={theme} onToggleTheme={toggleTheme} />
 }
 
 export default App
