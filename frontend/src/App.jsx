@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import io from 'socket.io-client'
 import './App.css'
+import MessageBubble from './components/MessageBubble'
 import ThemeToggle from './components/ThemeToggle'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
@@ -193,9 +194,10 @@ function LandingPage({ theme, onToggleTheme }) {
   )
 }
 
-function ChatRoom({ roomCode }) {
+function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
+  const [isConnected, setIsConnected] = useState(false)
   const socketRef = useRef(null)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
@@ -205,8 +207,10 @@ function ChatRoom({ roomCode }) {
     const socket = io(socketUrl)
     socketRef.current = socket
     socket.on('connect', () => {
+      setIsConnected(true)
       socket.emit('join-room', { roomCode, displayName })
     })
+    socket.on('disconnect', () => setIsConnected(false))
     socket.on('chat-message', (chatMessage) => {
       setMessages((currentMessages) => [...currentMessages, chatMessage])
     })
@@ -214,6 +218,7 @@ function ChatRoom({ roomCode }) {
     return () => {
       socket.disconnect()
       socketRef.current = null
+      setIsConnected(false)
     }
   }, [displayName, roomCode])
 
@@ -241,40 +246,69 @@ function ChatRoom({ roomCode }) {
     <main className="chat-section">
       <section className="chat-panel" aria-labelledby="room-title">
         <div className="chat-header">
-          <div>
-            <p className="hero-eyebrow">Live room</p>
-            <h1 id="room-title">Room {roomCode}</h1>
+          <div className="chat-title-group">
+            <button
+              className="back-button"
+              type="button"
+              aria-label="Leave room"
+              onClick={() => {
+                window.history.pushState({}, '', '/')
+                window.dispatchEvent(new PopStateEvent('popstate'))
+              }}
+            >
+              ←
+            </button>
+            <div>
+              <p className="section-kicker">Private room</p>
+              <h1 id="room-title">{roomCode}</h1>
+              <span className="room-subtitle">Messages disappear when this session ends</span>
+            </div>
           </div>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              window.history.pushState({}, '', '/')
-              window.dispatchEvent(new PopStateEvent('popstate'))
-            }}
-          >
-            Leave room
-          </button>
+          <div className="chat-header-actions">
+            <span className={`connection-status ${isConnected ? '' : 'connection-status-offline'}`}>
+              <span className="status-dot" aria-hidden="true" />
+              {isConnected ? 'Connected' : 'Connecting'}
+            </span>
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                window.history.pushState({}, '', '/')
+                window.dispatchEvent(new PopStateEvent('popstate'))
+              }}
+            >
+              Leave room
+            </button>
+          </div>
         </div>
 
-        <div className="messages" aria-live="polite">
-          {messages.length === 0 ? (
-            <p className="empty-messages">No messages yet. Start the conversation.</p>
-          ) : (
-            messages.map((chatMessage, index) => (
-              <article
-                className={`message ${
-                  chatMessage.isOwn ? 'message-own' : ''
-                }`}
+        <div className="chat-context-bar">
+          <div className="participant-summary">
+            <span className="avatar">{displayName.charAt(0).toUpperCase()}</span>
+            <div>
+              <strong>{displayName}</strong>
+              <span>Active in this session</span>
+            </div>
+          </div>
+          <span className="ephemeral-label">Ephemeral session</span>
+        </div>
+
+        <div className="messages" aria-live="polite" aria-label="Chat messages">
+          {messages.length === 0
+            ? (
+              <div className="chat-empty-state">
+                <div className="chat-empty-icon" aria-hidden="true">✦</div>
+                <h2>This room is ready</h2>
+                <p>Send a message to start the conversation. Nothing is saved after the session ends.</p>
+              </div>
+            )
+            : messages.map((chatMessage, index) => (
+              <MessageBubble
+                chatMessage={chatMessage}
                 key={`${chatMessage.timestamp}-${index}`}
-              >
-                <strong>
-                  {chatMessage.isOwn ? 'You' : chatMessage.displayName}
-                </strong>
-                <p>{chatMessage.message}</p>
-              </article>
-            ))
-          )}
+              />
+            ))}
         </div>
 
         <form className="message-form" onSubmit={sendMessage}>
@@ -284,9 +318,13 @@ function ChatRoom({ roomCode }) {
             placeholder="Write a message..."
             value={message}
             onChange={(event) => setMessage(event.target.value)}
+            disabled={!isConnected}
           />
-          <button type="submit">Send</button>
+          <button type="submit" disabled={!isConnected || !message.trim()}>
+            Send
+          </button>
         </form>
+        <p className="composer-note">Only people in this room can see your messages.</p>
       </section>
     </main>
   )
@@ -318,7 +356,11 @@ function App() {
   }
 
   return roomCode
-    ? <ChatRoom roomCode={roomCode} />
+    ? <ChatRoom
+      roomCode={roomCode}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+    />
     : <LandingPage theme={theme} onToggleTheme={toggleTheme} />
 }
 
