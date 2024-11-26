@@ -9,6 +9,7 @@ const io = require('socket.io')(server, {
 });
 
 const roomMessages = new Map();
+const activeUsers = new Map();
 
 function removeRoomMessagesWhenEmpty(roomCode) {
     const room = io.sockets.adapter.rooms.get(roomCode);
@@ -18,8 +19,13 @@ function removeRoomMessagesWhenEmpty(roomCode) {
 }
 
 io.on("connection", (socket)=>{
-    socket.on("join-room", ({ roomCode }) => {
-        if (typeof roomCode !== "string" || !roomCode.trim()) return;
+    socket.on("join-room", ({ roomCode, displayName }) => {
+        if (
+            typeof roomCode !== "string" ||
+            typeof displayName !== "string" ||
+            !roomCode.trim() ||
+            !displayName.trim()
+        ) return;
 
         if (socket.data.roomCode) {
             socket.leave(socket.data.roomCode);
@@ -27,6 +33,12 @@ io.on("connection", (socket)=>{
         }
 
         socket.data.roomCode = roomCode.trim();
+        socket.data.displayName = displayName.trim();
+        activeUsers.set(socket.id, {
+            id: socket.id,
+            displayName: socket.data.displayName,
+            roomCode: socket.data.roomCode,
+        });
         socket.join(socket.data.roomCode);
         if (!roomMessages.has(socket.data.roomCode)) {
             roomMessages.set(socket.data.roomCode, []);
@@ -48,7 +60,7 @@ io.on("connection", (socket)=>{
 
         const chatMessage = {
             senderId: socket.id,
-            displayName: displayName.trim(),
+            displayName: socket.data.displayName,
             message: message.trim(),
             timestamp: Date.now(),
         };
@@ -62,6 +74,7 @@ io.on("connection", (socket)=>{
     })
 
     socket.on("disconnect", () => {
+        activeUsers.delete(socket.id);
         if (socket.data.roomCode) {
             removeRoomMessagesWhenEmpty(socket.data.roomCode);
         }
