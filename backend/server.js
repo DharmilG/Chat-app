@@ -18,6 +18,14 @@ function removeRoomMessagesWhenEmpty(roomCode) {
     }
 }
 
+function broadcastRoomUsers(roomCode) {
+    const users = [...activeUsers.values()]
+        .filter((user) => user.roomCode === roomCode)
+        .map(({ id, displayName }) => ({ id, displayName }));
+
+    io.to(roomCode).emit("room-users", users);
+}
+
 io.on("connection", (socket)=>{
     socket.on("join-room", ({ roomCode, displayName }) => {
         if (
@@ -43,6 +51,7 @@ io.on("connection", (socket)=>{
         if (!roomMessages.has(socket.data.roomCode)) {
             roomMessages.set(socket.data.roomCode, []);
         }
+        broadcastRoomUsers(socket.data.roomCode);
     });
 
     socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
@@ -74,9 +83,11 @@ io.on("connection", (socket)=>{
     })
 
     socket.on("disconnect", () => {
+        const roomCode = socket.data.roomCode;
         activeUsers.delete(socket.id);
-        if (socket.data.roomCode) {
-            removeRoomMessagesWhenEmpty(socket.data.roomCode);
+        if (roomCode) {
+            removeRoomMessagesWhenEmpty(roomCode);
+            broadcastRoomUsers(roomCode);
         }
     });
 })
