@@ -26,7 +26,33 @@ function broadcastRoomUsers(roomCode) {
     io.to(roomCode).emit("room-users", users);
 }
 
+function broadcastDiscoverableUsers() {
+    const users = [...activeUsers.values()]
+        .filter((user) => user.discoverable)
+        .map(({ id, displayName }) => ({ id, displayName }));
+
+    io.emit("online-users", users);
+}
+
 io.on("connection", (socket)=>{
+    socket.on("discover-user", ({ displayName, discoverable = true }) => {
+        if (
+            typeof displayName !== "string" ||
+            typeof discoverable !== "boolean" ||
+            !displayName.trim()
+        ) return;
+
+        socket.data.displayName = displayName.trim();
+        socket.data.discoverable = discoverable;
+        activeUsers.set(socket.id, {
+            id: socket.id,
+            displayName: socket.data.displayName,
+            roomCode: socket.data.roomCode || null,
+            discoverable,
+        });
+        broadcastDiscoverableUsers();
+    });
+
     socket.on("join-room", ({ roomCode, displayName }) => {
         if (
             typeof roomCode !== "string" ||
@@ -35,9 +61,11 @@ io.on("connection", (socket)=>{
             !displayName.trim()
         ) return;
 
-        if (socket.data.roomCode) {
-            socket.leave(socket.data.roomCode);
-            removeRoomMessagesWhenEmpty(socket.data.roomCode);
+        const previousRoomCode = socket.data.roomCode;
+        if (previousRoomCode) {
+            socket.leave(previousRoomCode);
+            removeRoomMessagesWhenEmpty(previousRoomCode);
+            broadcastRoomUsers(previousRoomCode);
         }
 
         socket.data.roomCode = roomCode.trim();
@@ -46,12 +74,14 @@ io.on("connection", (socket)=>{
             id: socket.id,
             displayName: socket.data.displayName,
             roomCode: socket.data.roomCode,
+            discoverable: false,
         });
         socket.join(socket.data.roomCode);
         if (!roomMessages.has(socket.data.roomCode)) {
             roomMessages.set(socket.data.roomCode, []);
         }
         broadcastRoomUsers(socket.data.roomCode);
+        broadcastDiscoverableUsers();
     });
 
     socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
@@ -89,6 +119,7 @@ io.on("connection", (socket)=>{
             removeRoomMessagesWhenEmpty(roomCode);
             broadcastRoomUsers(roomCode);
         }
+        broadcastDiscoverableUsers();
     });
 })
 
