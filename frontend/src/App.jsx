@@ -23,6 +23,25 @@ function LandingPage({ theme, onToggleTheme }) {
   )
   const [roomCode, setRoomCode] = useState('')
   const [error, setError] = useState('')
+  const [onlineUsers, setOnlineUsers] = useState([])
+  const [userSearch, setUserSearch] = useState('')
+
+  useEffect(() => {
+    const name = displayName.trim()
+    if (!name) return undefined
+
+    const socket = io(socketUrl)
+    socket.on('connect', () => {
+      socket.emit('discover-user', { displayName: name, discoverable: true })
+    })
+    socket.on('online-users', (users) => {
+      setOnlineUsers(users.filter((user) => user.id !== socket.id))
+    })
+
+    return () => {
+      socket.disconnect()
+    }
+  }, [displayName])
 
   function createRoom(event) {
     event.preventDefault()
@@ -50,6 +69,10 @@ function LandingPage({ theme, onToggleTheme }) {
     sessionStorage.setItem('chatDisplayName', name)
     navigateToRoom(code)
   }
+
+  const filteredUsers = onlineUsers.filter((user) =>
+    user.displayName.toLowerCase().includes(userSearch.trim().toLowerCase()),
+  )
 
   return (
     <main className="home-page">
@@ -100,6 +123,9 @@ function LandingPage({ theme, onToggleTheme }) {
             value={displayName}
             onChange={(event) => {
               setDisplayName(event.target.value)
+              if (!event.target.value.trim()) {
+                setOnlineUsers([])
+              }
               setError('')
             }}
           />
@@ -122,10 +148,12 @@ function LandingPage({ theme, onToggleTheme }) {
             Find someone who is currently available and start a direct
             conversation.
           </p>
-          <button className="primary-action" type="button" disabled>
+          <button className="primary-action" type="button" disabled={!onlineUsers.length}>
             New private chat
           </button>
-          <span className="availability-note">User discovery is coming next</span>
+          <span className="availability-note">
+            {onlineUsers.length ? 'Select someone below to continue' : 'No discoverable users yet'}
+          </span>
         </article>
 
         <article className="action-card">
@@ -150,13 +178,35 @@ function LandingPage({ theme, onToggleTheme }) {
               <p className="section-kicker">People nearby</p>
               <h2>Online users</h2>
             </div>
-            <span className="count-badge">0 online</span>
+            <span className="count-badge">{onlineUsers.length} online</span>
           </div>
-          <div className="empty-state">
-            <div className="empty-state-icon" aria-hidden="true">○</div>
-            <strong>No one is available right now</strong>
-            <p>Online users will appear here when discovery is connected.</p>
-          </div>
+          <label className="sr-only" htmlFor="user-search">Search online users</label>
+          <input
+            className="user-search"
+            id="user-search"
+            type="search"
+            placeholder="Search online users"
+            value={userSearch}
+            onChange={(event) => setUserSearch(event.target.value)}
+          />
+          {filteredUsers.length ? (
+            <ul className="online-user-list">
+              {filteredUsers.map((user) => (
+                <li key={user.id}>
+                  <span className="avatar">{user.displayName.charAt(0).toUpperCase()}</span>
+                  <strong>{user.displayName}</strong>
+                  <span className="user-online-dot" aria-label="Online" />
+                  <button type="button" disabled>Chat</button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-state-icon" aria-hidden="true">○</div>
+              <strong>{onlineUsers.length ? 'No matching users' : 'No one is available right now'}</strong>
+              <p>{onlineUsers.length ? 'Try another search.' : 'Online users will appear here when they become discoverable.'}</p>
+            </div>
+          )}
         </article>
 
         <article className="dashboard-card join-card">
@@ -198,6 +248,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
   const [isConnected, setIsConnected] = useState(false)
+  const [roomUsers, setRoomUsers] = useState([])
   const socketRef = useRef(null)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
@@ -211,6 +262,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       socket.emit('join-room', { roomCode, displayName })
     })
     socket.on('disconnect', () => setIsConnected(false))
+    socket.on('room-users', (users) => setRoomUsers(users))
     socket.on('chat-message', (chatMessage) => {
       setMessages((currentMessages) => [...currentMessages, chatMessage])
     })
@@ -219,6 +271,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       socket.disconnect()
       socketRef.current = null
       setIsConnected(false)
+      setRoomUsers([])
     }
   }, [displayName, roomCode])
 
@@ -291,7 +344,9 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
               <span>Active in this session</span>
             </div>
           </div>
-          <span className="ephemeral-label">Ephemeral session</span>
+          <span className="ephemeral-label">
+            {roomUsers.length} {roomUsers.length === 1 ? 'person' : 'people'} here
+          </span>
         </div>
 
         <div className="messages" aria-live="polite" aria-label="Chat messages">
