@@ -569,6 +569,7 @@ button:hover {
 }
 
 .identity-card,
+.invitation-card,
 .action-card,
 .dashboard-card {
   border: 1px solid var(--border);
@@ -579,6 +580,56 @@ button:hover {
 
 .identity-card {
   padding: var(--space-6);
+}
+
+.invitation-card {
+  margin-top: var(--space-5);
+  padding: var(--space-6);
+  border-color: var(--accent-border);
+}
+
+.invitation-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.invitation-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.invitation-list li > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.invitation-list strong,
+.invitation-list span {
+  display: block;
+}
+
+.invitation-list strong {
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.invitation-list li > div span {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.invitation-list .secondary-button {
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
 }
 
 .identity-badge,
@@ -834,6 +885,7 @@ button:hover {
 
 @media (max-width: 560px) {
   .identity-card,
+  .invitation-card,
   .action-card,
   .dashboard-card {
     padding: var(--space-5);

@@ -25,23 +25,90 @@ function LandingPage({ theme, onToggleTheme }) {
   const [error, setError] = useState('')
   const [onlineUsers, setOnlineUsers] = useState([])
   const [userSearch, setUserSearch] = useState('')
+  const [invitations, setInvitations] = useState([])
+  const [requestStatus, setRequestStatus] = useState({})
+  const discoverySocketRef = useRef(null)
 
   useEffect(() => {
     const name = displayName.trim()
     if (!name) return undefined
 
     const socket = io(socketUrl)
+    discoverySocketRef.current = socket
     socket.on('connect', () => {
       socket.emit('discover-user', { displayName: name, discoverable: true })
     })
     socket.on('online-users', (users) => {
       setOnlineUsers(users.filter((user) => user.id !== socket.id))
     })
+    socket.on('private-invitation', (invitation) => {
+      setInvitations((currentInvitations) => [...currentInvitations, invitation])
+    })
+    socket.on('private-invitation-expired', ({ invitationId }) => {
+      setInvitations((currentInvitations) =>
+        currentInvitations.filter((invitation) => invitation.invitationId !== invitationId),
+      )
+      setRequestStatus((currentStatus) => {
+        const nextStatus = { ...currentStatus }
+        delete nextStatus[invitationId]
+        return nextStatus
+      })
+    })
+    socket.on('private-invitation-declined', ({ invitationId }) => {
+      setRequestStatus((currentStatus) => ({
+        ...currentStatus,
+        [invitationId]: 'Declined',
+      }))
+    })
+    socket.on('private-chat-accepted', ({ roomCode }) => {
+      navigateToRoom(roomCode)
+    })
 
     return () => {
       socket.disconnect()
+      discoverySocketRef.current = null
+      setInvitations([])
+      setRequestStatus({})
     }
   }, [displayName])
+
+  function requestPrivateChat(recipientId) {
+    const socket = discoverySocketRef.current
+    if (!socket?.connected) return
+
+    setRequestStatus((currentStatus) => ({
+      ...currentStatus,
+      [recipientId]: 'Sending...',
+    }))
+    socket.emit('private-chat-request', { recipientId }, (response) => {
+      setRequestStatus((currentStatus) => ({
+        ...currentStatus,
+        [recipientId]: response?.ok ? 'Invitation sent' : response?.error || 'Unavailable',
+      }))
+    })
+  }
+
+  function respondToInvitation(invitationId, accepted) {
+    const socket = discoverySocketRef.current
+    if (!socket?.connected) return
+
+    socket.emit(
+      accepted ? 'private-chat-accept' : 'private-chat-decline',
+      { invitationId },
+      (response) => {
+        if (!response?.ok) {
+          setRequestStatus((currentStatus) => ({
+            ...currentStatus,
+            [invitationId]: response?.error || 'Unavailable',
+          }))
+          return
+        }
+        setInvitations((currentInvitations) =>
+          currentInvitations.filter((invitation) => invitation.invitationId !== invitationId),
+        )
+      },
+    )
+  }
 
   function createRoom(event) {
     event.preventDefault()
@@ -139,6 +206,39 @@ function LandingPage({ theme, onToggleTheme }) {
         </p>
       </section>
 
+      {invitations.length > 0 && (
+        <section className="invitation-card" aria-labelledby="invitation-title">
+          <div className="section-heading">
+            <div>
+              <p className="section-kicker">Someone wants to talk</p>
+              <h2 id="invitation-title">Private chat invitations</h2>
+            </div>
+            <span className="count-badge">{invitations.length} waiting</span>
+          </div>
+          <ul className="invitation-list">
+            {invitations.map((invitation) => (
+              <li key={invitation.invitationId}>
+                <span className="avatar">{invitation.sender.displayName.charAt(0).toUpperCase()}</span>
+                <div>
+                  <strong>{invitation.sender.displayName}</strong>
+                  <span>Invitation expires soon</span>
+                </div>
+                <button type="button" onClick={() => respondToInvitation(invitation.invitationId, true)}>
+                  Accept
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => respondToInvitation(invitation.invitationId, false)}
+                >
+                  Decline
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="action-grid" aria-label="Connection options">
         <article className="action-card action-card-primary">
           <div className="action-icon" aria-hidden="true">↗</div>
@@ -196,7 +296,13 @@ function LandingPage({ theme, onToggleTheme }) {
                   <span className="avatar">{user.displayName.charAt(0).toUpperCase()}</span>
                   <strong>{user.displayName}</strong>
                   <span className="user-online-dot" aria-label="Online" />
-                  <button type="button" disabled>Chat</button>
+                  <button
+                    type="button"
+                    disabled={Boolean(requestStatus[user.id]) && requestStatus[user.id] === 'Sending...'}
+                    onClick={() => requestPrivateChat(user.id)}
+                  >
+                    {requestStatus[user.id] || 'Chat'}
+                  </button>
                 </li>
               ))}
             </ul>
