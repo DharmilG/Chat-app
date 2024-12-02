@@ -1,4 +1,5 @@
 const app = require("express")();
+const crypto = require("crypto");
 
 const server = require("http").createServer(app);
 
@@ -10,6 +11,9 @@ const io = require('socket.io')(server, {
 
 const roomMessages = new Map();
 const activeUsers = new Map();
+const pendingInvitations = new Map();
+const privateRooms = new Map();
+const invitationLifetimeMs = 60 * 1000;
 
 function removeRoomMessagesWhenEmpty(roomCode) {
     const room = io.sockets.adapter.rooms.get(roomCode);
@@ -34,6 +38,26 @@ function broadcastDiscoverableUsers() {
     io.emit("online-users", users);
 }
 
+function createPrivateRoomCode() {
+    let roomCode;
+    do {
+        roomCode = crypto.randomBytes(4).toString("hex").toUpperCase();
+    } while (privateRooms.has(roomCode));
+    return roomCode;
+}
+
+function expireInvitation(invitationId) {
+    const invitation = pendingInvitations.get(invitationId);
+    if (!invitation) return;
+
+    pendingInvitations.delete(invitationId);
+    const sender = io.sockets.sockets.get(invitation.senderId);
+    const recipient = io.sockets.sockets.get(invitation.recipientId);
+    [sender, recipient].forEach((client) => {
+        client?.emit("private-invitation-expired", { invitationId });
+    });
+}
+
 io.on("connection", (socket)=>{
     socket.on("discover-user", ({ displayName, discoverable = true }) => {
         if (
@@ -53,6 +77,43 @@ io.on("connection", (socket)=>{
         broadcastDiscoverableUsers();
     });
 
+    socket.on("private-chat-request", ({ recipientId }, acknowledge) => {
+        const sender = activeUsers.get(socket.id);
+        const recipient = activeUsers.get(recipientId);
+        if (
+            !sender ||
+            !recipient ||
+            sender.id === recipient.id ||
+            !recipient.discoverable ||
+            pendingInvitations.values().some(
+                (invitation) =>
+                    invitation.senderId === socket.id &&
+                    invitation.recipientId === recipientId,
+            )
+        ) {
+            acknowledge?.({ ok: false, error: "This user is not available." });
+            return;
+        }
+
+        const invitation = {
+            id: crypto.randomBytes(8).toString("hex"),
+            senderId: socket.id,
+            recipientId,
+            senderName: sender.displayName,
+            recipientName: recipient.displayName,
+            expiresAt: Date.now() + invitationLifetimeMs,
+        };
+        pendingInvitations.set(invitation.id, invitation);
+        setTimeout(() => expireInvitation(invitation.id), invitationLifetimeMs);
+
+        io.to(recipientId).emit("private-invitation", {
+            invitationId: invitation.id,
+            sender: { id: sender.id, displayName: sender.displayName },
+            expiresAt: invitation.expiresAt,
+        });
+        acknowledge?.({ ok: true, invitationId: invitation.id });
+    });
+
     socket.on("join-room", ({ roomCode, displayName }) => {
         if (
             typeof roomCode !== "string" ||
@@ -61,6 +122,12 @@ io.on("connection", (socket)=>{
             !displayName.trim()
         ) return;
 
+        const normalizedRoomCode = roomCode.trim();
+        const privateParticipants = privateRooms.get(normalizedRoomCode);
+        if (privateParticipants && !privateParticipants.has(socket.id)) {
+            return;
+        }
+
         const previousRoomCode = socket.data.roomCode;
         if (previousRoomCode) {
             socket.leave(previousRoomCode);
@@ -68,7 +135,7 @@ io.on("connection", (socket)=>{
             broadcastRoomUsers(previousRoomCode);
         }
 
-        socket.data.roomCode = roomCode.trim();
+        socket.data.roomCode = normalizedRoomCode;
         socket.data.displayName = displayName.trim();
         activeUsers.set(socket.id, {
             id: socket.id,
@@ -82,6 +149,56 @@ io.on("connection", (socket)=>{
         }
         broadcastRoomUsers(socket.data.roomCode);
         broadcastDiscoverableUsers();
+    });
+
+    socket.on("private-chat-accept", ({ invitationId }, acknowledge) => {
+        const invitation = pendingInvitations.get(invitationId);
+        if (!invitation || invitation.recipientId !== socket.id) {
+            acknowledge?.({ ok: false, error: "This invitation is no longer available." });
+            return;
+        }
+
+        pendingInvitations.delete(invitationId);
+        const roomCode = createPrivateRoomCode();
+        privateRooms.set(roomCode, new Set([invitation.senderId, invitation.recipientId]));
+        const sender = io.sockets.sockets.get(invitation.senderId);
+        const recipient = io.sockets.sockets.get(invitation.recipientId);
+        const event = {
+            roomCode,
+            otherUser: {
+                id: invitation.recipientId,
+                displayName: invitation.recipientName,
+            },
+        };
+        sender?.emit("private-chat-accepted", {
+            ...event,
+            otherUser: {
+                id: invitation.recipientId,
+                displayName: invitation.recipientName,
+            },
+        });
+        recipient?.emit("private-chat-accepted", {
+            ...event,
+            otherUser: {
+                id: invitation.senderId,
+                displayName: invitation.senderName,
+            },
+        });
+        acknowledge?.({ ok: true, roomCode });
+    });
+
+    socket.on("private-chat-decline", ({ invitationId }, acknowledge) => {
+        const invitation = pendingInvitations.get(invitationId);
+        if (!invitation || invitation.recipientId !== socket.id) {
+            acknowledge?.({ ok: false, error: "This invitation is no longer available." });
+            return;
+        }
+
+        pendingInvitations.delete(invitationId);
+        io.to(invitation.senderId).emit("private-invitation-declined", {
+            invitationId,
+        });
+        acknowledge?.({ ok: true });
     });
 
     socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
@@ -114,7 +231,20 @@ io.on("connection", (socket)=>{
 
     socket.on("disconnect", () => {
         const roomCode = socket.data.roomCode;
+        for (const [invitationId, invitation] of pendingInvitations) {
+            if (invitation.senderId === socket.id || invitation.recipientId === socket.id) {
+                pendingInvitations.delete(invitationId);
+                const otherSocketId = invitation.senderId === socket.id
+                    ? invitation.recipientId
+                    : invitation.senderId;
+                io.to(otherSocketId).emit("private-invitation-expired", { invitationId });
+            }
+        }
         activeUsers.delete(socket.id);
+        for (const [privateRoomCode, participants] of privateRooms) {
+            participants.delete(socket.id);
+            if (!participants.size) privateRooms.delete(privateRoomCode);
+        }
         if (roomCode) {
             removeRoomMessagesWhenEmpty(roomCode);
             broadcastRoomUsers(roomCode);
