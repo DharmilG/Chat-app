@@ -46,6 +46,10 @@ function createPrivateRoomCode() {
     return roomCode;
 }
 
+function createPrivateRoomAccessToken() {
+    return crypto.randomBytes(16).toString("hex");
+}
+
 function expireInvitation(invitationId) {
     const invitation = pendingInvitations.get(invitationId);
     if (!invitation) return;
@@ -114,17 +118,22 @@ io.on("connection", (socket)=>{
         acknowledge?.({ ok: true, invitationId: invitation.id });
     });
 
-    socket.on("join-room", ({ roomCode, displayName }) => {
+    socket.on("join-room", ({ roomCode, displayName, privateAccessToken }, acknowledge) => {
         if (
             typeof roomCode !== "string" ||
             typeof displayName !== "string" ||
             !roomCode.trim() ||
             !displayName.trim()
-        ) return;
+        ) {
+            acknowledge?.({ ok: false, error: "Room code and display name are required." });
+            return;
+        }
 
         const normalizedRoomCode = roomCode.trim();
         const privateParticipants = privateRooms.get(normalizedRoomCode);
-        if (privateParticipants && !privateParticipants.has(socket.id)) {
+        const expectedName = privateParticipants?.accessTokens.get(privateAccessToken);
+        if (privateParticipants && expectedName !== displayName.trim()) {
+            acknowledge?.({ ok: false, error: "You are not invited to this private room." });
             return;
         }
 
@@ -149,6 +158,11 @@ io.on("connection", (socket)=>{
         }
         broadcastRoomUsers(socket.data.roomCode);
         broadcastDiscoverableUsers();
+        if (privateParticipants) {
+            privateParticipants.accessTokens.delete(privateAccessToken);
+            privateParticipants.connected.add(socket.id);
+        }
+        acknowledge?.({ ok: true });
     });
 
     socket.on("private-chat-accept", ({ invitationId }, acknowledge) => {
@@ -160,7 +174,15 @@ io.on("connection", (socket)=>{
 
         pendingInvitations.delete(invitationId);
         const roomCode = createPrivateRoomCode();
-        privateRooms.set(roomCode, new Set([invitation.senderId, invitation.recipientId]));
+        const senderAccessToken = createPrivateRoomAccessToken();
+        const recipientAccessToken = createPrivateRoomAccessToken();
+        privateRooms.set(roomCode, {
+            accessTokens: new Map([
+                [senderAccessToken, invitation.senderName],
+                [recipientAccessToken, invitation.recipientName],
+            ]),
+            connected: new Set(),
+        });
         const sender = io.sockets.sockets.get(invitation.senderId);
         const recipient = io.sockets.sockets.get(invitation.recipientId);
         const event = {
@@ -172,6 +194,7 @@ io.on("connection", (socket)=>{
         };
         sender?.emit("private-chat-accepted", {
             ...event,
+            privateAccessToken: senderAccessToken,
             otherUser: {
                 id: invitation.recipientId,
                 displayName: invitation.recipientName,
@@ -179,6 +202,7 @@ io.on("connection", (socket)=>{
         });
         recipient?.emit("private-chat-accepted", {
             ...event,
+            privateAccessToken: recipientAccessToken,
             otherUser: {
                 id: invitation.senderId,
                 displayName: invitation.senderName,
@@ -241,9 +265,11 @@ io.on("connection", (socket)=>{
             }
         }
         activeUsers.delete(socket.id);
-        for (const [privateRoomCode, participants] of privateRooms) {
-            participants.delete(socket.id);
-            if (!participants.size) privateRooms.delete(privateRoomCode);
+        for (const [privateRoomCode, privateRoom] of privateRooms) {
+            privateRoom.connected.delete(socket.id);
+            if (!privateRoom.connected.size && !privateRoom.accessTokens.size) {
+                privateRooms.delete(privateRoomCode);
+            }
         }
         if (roomCode) {
             removeRoomMessagesWhenEmpty(roomCode);

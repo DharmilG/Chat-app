@@ -12,7 +12,12 @@ function getRoomCode() {
   return match ? decodeURIComponent(match[1]) : null
 }
 
-function navigateToRoom(roomCode) {
+function navigateToRoom(roomCode, privateAccessToken = '') {
+  if (privateAccessToken) {
+    sessionStorage.setItem('chatPrivateAccessToken', privateAccessToken)
+  } else {
+    sessionStorage.removeItem('chatPrivateAccessToken')
+  }
   window.history.pushState({}, '', `/room/${encodeURIComponent(roomCode)}`)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -60,8 +65,8 @@ function LandingPage({ theme, onToggleTheme }) {
         [invitationId]: 'Declined',
       }))
     })
-    socket.on('private-chat-accepted', ({ roomCode }) => {
-      navigateToRoom(roomCode)
+    socket.on('private-chat-accepted', ({ roomCode, privateAccessToken }) => {
+      navigateToRoom(roomCode, privateAccessToken)
     })
 
     return () => {
@@ -120,6 +125,7 @@ function LandingPage({ theme, onToggleTheme }) {
     }
 
     sessionStorage.setItem('chatDisplayName', name)
+    sessionStorage.removeItem('chatPrivateAccessToken')
     navigateToRoom(nanoid(6).toUpperCase())
   }
 
@@ -134,6 +140,7 @@ function LandingPage({ theme, onToggleTheme }) {
     }
 
     sessionStorage.setItem('chatDisplayName', name)
+    sessionStorage.removeItem('chatPrivateAccessToken')
     navigateToRoom(code)
   }
 
@@ -355,6 +362,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [messages, setMessages] = useState([])
   const [isConnected, setIsConnected] = useState(false)
   const [roomUsers, setRoomUsers] = useState([])
+  const [roomError, setRoomError] = useState('')
   const socketRef = useRef(null)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
@@ -364,8 +372,20 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
     const socket = io(socketUrl)
     socketRef.current = socket
     socket.on('connect', () => {
-      setIsConnected(true)
-      socket.emit('join-room', { roomCode, displayName })
+      const privateAccessToken = sessionStorage.getItem('chatPrivateAccessToken') || ''
+      socket.emit('join-room', {
+        roomCode,
+        displayName,
+        privateAccessToken,
+      }, (response) => {
+        if (!response?.ok) {
+          setRoomError(response?.error || 'Unable to join this room.')
+          socket.disconnect()
+          return
+        }
+        sessionStorage.removeItem('chatPrivateAccessToken')
+        setIsConnected(true)
+      })
     })
     socket.on('disconnect', () => setIsConnected(false))
     socket.on('room-users', (users) => setRoomUsers(users))
@@ -378,6 +398,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       socketRef.current = null
       setIsConnected(false)
       setRoomUsers([])
+      setRoomError('')
     }
   }, [displayName, roomCode])
 
@@ -454,6 +475,8 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
             {roomUsers.length} {roomUsers.length === 1 ? 'person' : 'people'} here
           </span>
         </div>
+
+        {roomError && <p className="form-error" role="alert">{roomError}</p>}
 
         <div className="messages" aria-live="polite" aria-label="Chat messages">
           {messages.length === 0
