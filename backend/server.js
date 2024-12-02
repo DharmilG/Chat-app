@@ -58,7 +58,10 @@ function expireInvitation(invitationId) {
     const sender = io.sockets.sockets.get(invitation.senderId);
     const recipient = io.sockets.sockets.get(invitation.recipientId);
     [sender, recipient].forEach((client) => {
-        client?.emit("private-invitation-expired", { invitationId });
+        client?.emit("private-invitation-expired", {
+            invitationId,
+            recipientId: invitation.recipientId,
+        });
     });
 }
 
@@ -221,6 +224,7 @@ io.on("connection", (socket)=>{
         pendingInvitations.delete(invitationId);
         io.to(invitation.senderId).emit("private-invitation-declined", {
             invitationId,
+            recipientId: invitation.recipientId,
         });
         acknowledge?.({ ok: true });
     });
@@ -261,7 +265,10 @@ io.on("connection", (socket)=>{
                 const otherSocketId = invitation.senderId === socket.id
                     ? invitation.recipientId
                     : invitation.senderId;
-                io.to(otherSocketId).emit("private-invitation-expired", { invitationId });
+                io.to(otherSocketId).emit("private-invitation-expired", {
+                    invitationId,
+                    recipientId: invitation.recipientId,
+                });
             }
         }
         activeUsers.delete(socket.id);

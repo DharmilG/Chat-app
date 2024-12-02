@@ -49,20 +49,20 @@ function LandingPage({ theme, onToggleTheme }) {
     socket.on('private-invitation', (invitation) => {
       setInvitations((currentInvitations) => [...currentInvitations, invitation])
     })
-    socket.on('private-invitation-expired', ({ invitationId }) => {
+    socket.on('private-invitation-expired', ({ invitationId, recipientId }) => {
       setInvitations((currentInvitations) =>
         currentInvitations.filter((invitation) => invitation.invitationId !== invitationId),
       )
       setRequestStatus((currentStatus) => {
         const nextStatus = { ...currentStatus }
-        delete nextStatus[invitationId]
+        delete nextStatus[recipientId]
         return nextStatus
       })
     })
-    socket.on('private-invitation-declined', ({ invitationId }) => {
+    socket.on('private-invitation-declined', ({ recipientId }) => {
       setRequestStatus((currentStatus) => ({
         ...currentStatus,
-        [invitationId]: 'Declined',
+        [recipientId]: 'Declined',
       }))
     })
     socket.on('private-chat-accepted', ({ roomCode, privateAccessToken }) => {
