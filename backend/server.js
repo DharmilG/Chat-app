@@ -65,6 +65,17 @@ function expireInvitation(invitationId) {
     });
 }
 
+function relayWebRtcSignal(socket, eventName, payload) {
+    const roomCode = socket.data.roomCode;
+    const privateRoom = roomCode && privateRooms.get(roomCode);
+    if (!socket.data.isPrivateRoom || !privateRoom || !payload) return;
+
+    socket.to(roomCode).emit(eventName, {
+        from: socket.id,
+        ...payload,
+    });
+}
+
 io.on("connection", (socket)=>{
     socket.on("discover-user", ({ displayName, discoverable = true }) => {
         if (
@@ -149,6 +160,7 @@ io.on("connection", (socket)=>{
 
         socket.data.roomCode = normalizedRoomCode;
         socket.data.displayName = displayName.trim();
+        socket.data.isPrivateRoom = Boolean(privateParticipants);
         activeUsers.set(socket.id, {
             id: socket.id,
             displayName: socket.data.displayName,
@@ -165,7 +177,22 @@ io.on("connection", (socket)=>{
             privateParticipants.accessTokens.delete(privateAccessToken);
             privateParticipants.connected.add(socket.id);
         }
-        acknowledge?.({ ok: true });
+        acknowledge?.({ ok: true, isPrivateRoom: socket.data.isPrivateRoom });
+    });
+
+    socket.on("webrtc-offer", ({ description }) => {
+        if (description?.type !== "offer" || typeof description.sdp !== "string") return;
+        relayWebRtcSignal(socket, "webrtc-offer", { description });
+    });
+
+    socket.on("webrtc-answer", ({ description }) => {
+        if (description?.type !== "answer" || typeof description.sdp !== "string") return;
+        relayWebRtcSignal(socket, "webrtc-answer", { description });
+    });
+
+    socket.on("webrtc-ice-candidate", ({ candidate }) => {
+        if (!candidate || typeof candidate.candidate !== "string") return;
+        relayWebRtcSignal(socket, "webrtc-ice-candidate", { candidate });
     });
 
     socket.on("private-chat-accept", ({ invitationId }, acknowledge) => {
@@ -272,6 +299,7 @@ io.on("connection", (socket)=>{
             }
         }
         activeUsers.delete(socket.id);
+        socket.data.isPrivateRoom = false;
         for (const [privateRoomCode, privateRoom] of privateRooms) {
             privateRoom.connected.delete(socket.id);
             if (!privateRoom.connected.size && !privateRoom.accessTokens.size) {
