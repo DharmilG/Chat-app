@@ -363,7 +363,13 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [isConnected, setIsConnected] = useState(false)
   const [roomUsers, setRoomUsers] = useState([])
   const [roomError, setRoomError] = useState('')
+  const [isPrivateRoom, setIsPrivateRoom] = useState(false)
+  const [transportStatus, setTransportStatus] = useState('socket')
+  const [transportError, setTransportError] = useState('')
   const socketRef = useRef(null)
+  const peerConnectionRef = useRef(null)
+  const dataChannelRef = useRef(null)
+  const isPrivateRoomRef = useRef(false)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
   )
@@ -371,6 +377,89 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   useEffect(() => {
     const socket = io(socketUrl)
     socketRef.current = socket
+
+    function addIncomingMessage(chatMessage) {
+      setMessages((currentMessages) => [...currentMessages, chatMessage])
+    }
+
+    function attachDataChannel(dataChannel) {
+      dataChannelRef.current = dataChannel
+      dataChannel.onopen = () => {
+        setTransportStatus('connected')
+        setTransportError('')
+      }
+      dataChannel.onclose = () => {
+        setTransportStatus('disconnected')
+      }
+      dataChannel.onerror = () => {
+        setTransportStatus('failed')
+        setTransportError('Direct chat connection failed.')
+      }
+      dataChannel.onmessage = (event) => {
+        try {
+          addIncomingMessage(JSON.parse(event.data))
+        } catch {
+          setTransportError('Received an invalid direct message.')
+        }
+      }
+    }
+
+    async function createPeerConnection(isInitiator) {
+      if (peerConnectionRef.current) return peerConnectionRef.current
+
+      const peerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      })
+      peerConnectionRef.current = peerConnection
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('webrtc-ice-candidate', { candidate: event.candidate })
+        }
+      }
+      peerConnection.ondatachannel = (event) => attachDataChannel(event.channel)
+      peerConnection.onconnectionstatechange = () => {
+        if (['failed', 'closed'].includes(peerConnection.connectionState)) {
+          setTransportStatus('failed')
+          setTransportError('Direct chat connection could not be established.')
+        }
+      }
+
+      if (isInitiator) {
+        attachDataChannel(peerConnection.createDataChannel('chat'))
+        const offer = await peerConnection.createOffer()
+        await peerConnection.setLocalDescription(offer)
+        socket.emit('webrtc-offer', { description: peerConnection.localDescription })
+      }
+
+      return peerConnection
+    }
+
+    async function handleOffer(description) {
+      const peerConnection = await createPeerConnection(false)
+      await peerConnection.setRemoteDescription(description)
+      const answer = await peerConnection.createAnswer()
+      await peerConnection.setLocalDescription(answer)
+      socket.emit('webrtc-answer', { description: peerConnection.localDescription })
+    }
+
+    socket.on('webrtc-offer', ({ description }) => {
+      handleOffer(description).catch(() => {
+        setTransportStatus('failed')
+        setTransportError('Could not accept the direct chat offer.')
+      })
+    })
+    socket.on('webrtc-answer', ({ description }) => {
+      peerConnectionRef.current?.setRemoteDescription(description).catch(() => {
+        setTransportStatus('failed')
+        setTransportError('Could not finish the direct chat negotiation.')
+      })
+    })
+    socket.on('webrtc-ice-candidate', ({ candidate }) => {
+      peerConnectionRef.current?.addIceCandidate(candidate).catch(() => {
+        setTransportError('Could not add a network connection candidate.')
+      })
+    })
+
     socket.on('connect', () => {
       const privateAccessToken = sessionStorage.getItem('chatPrivateAccessToken') || ''
       socket.emit('join-room', {
@@ -384,21 +473,43 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
           return
         }
         sessionStorage.removeItem('chatPrivateAccessToken')
+        isPrivateRoomRef.current = response.isPrivateRoom
+        setIsPrivateRoom(response.isPrivateRoom)
+        setTransportStatus(response.isPrivateRoom ? 'connecting' : 'socket')
         setIsConnected(true)
       })
     })
     socket.on('disconnect', () => setIsConnected(false))
-    socket.on('room-users', (users) => setRoomUsers(users))
+    socket.on('room-users', (users) => {
+      setRoomUsers(users)
+      if (
+        isPrivateRoomRef.current &&
+        users.length === 2 &&
+        users.some((user) => user.id === socket.id)
+      ) {
+        const isInitiator = socket.id === [...users].sort((a, b) => a.id.localeCompare(b.id))[0].id
+        createPeerConnection(isInitiator).catch(() => {
+          setTransportStatus('failed')
+          setTransportError('Could not start direct chat.')
+        })
+      }
+    })
     socket.on('chat-message', (chatMessage) => {
-      setMessages((currentMessages) => [...currentMessages, chatMessage])
+      if (!isPrivateRoomRef.current) addIncomingMessage(chatMessage)
     })
 
     return () => {
       socket.disconnect()
+      peerConnectionRef.current?.close()
+      peerConnectionRef.current = null
+      dataChannelRef.current = null
       socketRef.current = null
       setIsConnected(false)
       setRoomUsers([])
       setRoomError('')
+      isPrivateRoomRef.current = false
+      setIsPrivateRoom(false)
+      setTransportStatus('socket')
     }
   }, [displayName, roomCode])
 
@@ -407,20 +518,37 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
     const text = message.trim()
     if (!text) return
 
-    if (!socketRef.current?.connected) return
-
-    socketRef.current.emit('chat-message', {
-      roomCode,
-      displayName,
-      message: text,
-    }, (chatMessage) => {
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        { ...chatMessage, isOwn: true },
-      ])
-    })
+    const dataChannel = dataChannelRef.current
+    if (isPrivateRoom) {
+      if (dataChannel?.readyState !== 'open') return
+      const chatMessage = {
+        senderId: socketRef.current.id,
+        displayName,
+        message: text,
+        timestamp: Date.now(),
+        isOwn: true,
+      }
+      dataChannel.send(JSON.stringify(chatMessage))
+      setMessages((currentMessages) => [...currentMessages, chatMessage])
+    } else {
+      if (!socketRef.current?.connected) return
+      socketRef.current.emit('chat-message', {
+        roomCode,
+        displayName,
+        message: text,
+      }, (chatMessage) => {
+        setMessages((currentMessages) => [
+          ...currentMessages,
+          { ...chatMessage, isOwn: true },
+        ])
+      })
+    }
     setMessage('')
   }
+
+  const canSend = isPrivateRoom
+    ? transportStatus === 'connected'
+    : isConnected
 
   return (
     <main className="chat-section">
@@ -447,7 +575,9 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
           <div className="chat-header-actions">
             <span className={`connection-status ${isConnected ? '' : 'connection-status-offline'}`}>
               <span className="status-dot" aria-hidden="true" />
-              {isConnected ? 'Connected' : 'Connecting'}
+              {isPrivateRoom
+                ? (transportStatus === 'connected' ? 'Direct connection' : 'Connecting directly')
+                : (isConnected ? 'Connected' : 'Connecting')}
             </span>
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
             <button
@@ -477,6 +607,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
         </div>
 
         {roomError && <p className="form-error" role="alert">{roomError}</p>}
+        {transportError && <p className="form-error" role="alert">{transportError}</p>}
 
         <div className="messages" aria-live="polite" aria-label="Chat messages">
           {messages.length === 0
@@ -502,9 +633,9 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
             placeholder="Write a message..."
             value={message}
             onChange={(event) => setMessage(event.target.value)}
-            disabled={!isConnected}
+            disabled={!canSend}
           />
-          <button type="submit" disabled={!isConnected || !message.trim()}>
+          <button type="submit" disabled={!canSend || !message.trim()}>
             Send
           </button>
         </form>
