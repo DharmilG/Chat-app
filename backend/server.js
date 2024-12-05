@@ -257,6 +257,13 @@ io.on("connection", (socket)=>{
     });
 
     socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
+        if (socket.data.isPrivateRoom) {
+            acknowledge?.({
+                ok: false,
+                error: "Private room messages must use the direct connection.",
+            });
+            return;
+        }
         if (
             typeof roomCode !== "string" ||
             typeof displayName !== "string" ||
