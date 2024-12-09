@@ -1,5 +1,7 @@
 const app = require("express")();
 const crypto = require("crypto");
+const host = process.env.HOST || "0.0.0.0";
+const lanOnly = process.env.LAN_ONLY === "true";
 
 const server = require("http").createServer(app);
 
@@ -77,6 +79,11 @@ function relayWebRtcSignal(socket, eventName, payload) {
 }
 
 io.on("connection", (socket)=>{
+    socket.emit("server-mode", {
+        lanOnly,
+        signaling: "local-socket",
+    });
+
     socket.on("discover-user", ({ displayName, discoverable = true }) => {
         if (
             typeof displayName !== "string" ||
@@ -177,7 +184,11 @@ io.on("connection", (socket)=>{
             privateParticipants.accessTokens.delete(privateAccessToken);
             privateParticipants.connected.add(socket.id);
         }
-        acknowledge?.({ ok: true, isPrivateRoom: socket.data.isPrivateRoom });
+        acknowledge?.({
+            ok: true,
+            isPrivateRoom: socket.data.isPrivateRoom,
+            lanOnly,
+        });
     });
 
     socket.on("webrtc-offer", ({ description }) => {
@@ -321,4 +332,6 @@ io.on("connection", (socket)=>{
     });
 })
 
-server.listen(5000, ()=> console.log("Server started on port 5000"));
+server.listen(5000, host, ()=> {
+    console.log(`Server started on ${host}:5000 (${lanOnly ? "LAN-only" : "automatic"} mode)`);
+});
