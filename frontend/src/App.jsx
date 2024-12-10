@@ -6,6 +6,7 @@ import MessageBubble from './components/MessageBubble'
 import ThemeToggle from './components/ThemeToggle'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
+const strictLanOnly = import.meta.env.VITE_LAN_ONLY === 'true'
 
 function getRoomCode() {
   const match = window.location.pathname.match(/^\/room\/([^/]+)$/)
@@ -32,6 +33,7 @@ function LandingPage({ theme, onToggleTheme }) {
   const [userSearch, setUserSearch] = useState('')
   const [invitations, setInvitations] = useState([])
   const [requestStatus, setRequestStatus] = useState({})
+  const [serverMode, setServerMode] = useState(strictLanOnly ? 'LAN-only' : 'Automatic')
   const discoverySocketRef = useRef(null)
 
   useEffect(() => {
@@ -40,6 +42,9 @@ function LandingPage({ theme, onToggleTheme }) {
 
     const socket = io(socketUrl)
     discoverySocketRef.current = socket
+    socket.on('server-mode', ({ lanOnly }) => {
+      setServerMode(lanOnly ? 'LAN-only' : 'Automatic')
+    })
     socket.on('connect', () => {
       socket.emit('discover-user', { displayName: name, discoverable: true })
     })
@@ -163,6 +168,7 @@ function LandingPage({ theme, onToggleTheme }) {
             <span className="status-dot" aria-hidden="true" />
             Ready to connect
           </span>
+          <span className="mode-badge">{serverMode} signaling</span>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <button className="icon-button" type="button" disabled>
             Settings
@@ -366,10 +372,12 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [isPrivateRoom, setIsPrivateRoom] = useState(false)
   const [transportStatus, setTransportStatus] = useState('socket')
   const [transportError, setTransportError] = useState('')
+  const [serverMode, setServerMode] = useState(strictLanOnly ? 'LAN-only' : 'Automatic')
   const socketRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const dataChannelRef = useRef(null)
   const isPrivateRoomRef = useRef(false)
+  const lanOnlyRef = useRef(strictLanOnly)
   const [displayName] = useState(
     () => sessionStorage.getItem('chatDisplayName') || 'Guest',
   )
@@ -408,7 +416,9 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       if (peerConnectionRef.current) return peerConnectionRef.current
 
       const peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceServers: lanOnlyRef.current
+          ? []
+          : [{ urls: 'stun:stun.l.google.com:19302' }],
       })
       peerConnectionRef.current = peerConnection
       peerConnection.onicecandidate = (event) => {
@@ -458,6 +468,10 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       peerConnectionRef.current?.addIceCandidate(candidate).catch(() => {
         setTransportError('Could not add a network connection candidate.')
       })
+      socket.on('server-mode', ({ lanOnly }) => {
+        lanOnlyRef.current = lanOnly
+        setServerMode(lanOnly ? 'LAN-only' : 'Automatic')
+      })
     })
 
     socket.on('connect', () => {
@@ -475,6 +489,8 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
         sessionStorage.removeItem('chatPrivateAccessToken')
         isPrivateRoomRef.current = response.isPrivateRoom
         setIsPrivateRoom(response.isPrivateRoom)
+        lanOnlyRef.current = response.lanOnly
+        setServerMode(response.lanOnly ? 'LAN-only' : 'Automatic')
         setTransportStatus(response.isPrivateRoom ? 'connecting' : 'socket')
         setIsConnected(true)
       })
@@ -579,6 +595,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
                 ? (transportStatus === 'connected' ? 'Direct connection' : 'Connecting directly')
                 : (isConnected ? 'Connected' : 'Connecting')}
             </span>
+            <span className="mode-badge">{serverMode} signaling</span>
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
             <button
               className="secondary-button"
