@@ -373,6 +373,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
   const [transportStatus, setTransportStatus] = useState('socket')
   const [transportError, setTransportError] = useState('')
   const [serverMode, setServerMode] = useState(strictLanOnly ? 'LAN-only' : 'Automatic')
+  const [connectionPath, setConnectionPath] = useState('Waiting for peer')
   const socketRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const dataChannelRef = useRef(null)
@@ -423,11 +424,16 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       peerConnectionRef.current = peerConnection
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
+          const candidateType = event.candidate.candidate.match(/ typ ([a-z]+)/)?.[1]
+          if (lanOnlyRef.current && candidateType !== 'host') return
           socket.emit('webrtc-ice-candidate', { candidate: event.candidate })
         }
       }
       peerConnection.ondatachannel = (event) => attachDataChannel(event.channel)
       peerConnection.onconnectionstatechange = () => {
+        if (peerConnection.connectionState === 'connected') {
+          setConnectionPath(lanOnlyRef.current ? 'LAN direct' : 'Direct peer')
+        }
         if (['failed', 'closed'].includes(peerConnection.connectionState)) {
           setTransportStatus('failed')
           setTransportError('Direct chat connection could not be established.')
@@ -465,6 +471,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       })
     })
     socket.on('webrtc-ice-candidate', ({ candidate }) => {
+      if (lanOnlyRef.current && !candidate.candidate.includes(' typ host')) return
       peerConnectionRef.current?.addIceCandidate(candidate).catch(() => {
         setTransportError('Could not add a network connection candidate.')
       })
@@ -526,6 +533,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       isPrivateRoomRef.current = false
       setIsPrivateRoom(false)
       setTransportStatus('socket')
+      setConnectionPath('Waiting for peer')
     }
   }, [displayName, roomCode])
 
@@ -621,6 +629,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
           <span className="ephemeral-label">
             {roomUsers.length} {roomUsers.length === 1 ? 'person' : 'people'} here
           </span>
+          {isPrivateRoom && <span className="ephemeral-label">{connectionPath}</span>}
         </div>
 
         {roomError && <p className="form-error" role="alert">{roomError}</p>}
