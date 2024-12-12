@@ -2,13 +2,18 @@ const app = require("express")();
 const crypto = require("crypto");
 const host = process.env.HOST || "0.0.0.0";
 const lanOnly = process.env.LAN_ONLY === "true";
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
+    : true;
+const maxSocketPayload = 256 * 1024;
 
 const server = require("http").createServer(app);
 
 const io = require('socket.io')(server, {
     cors: {
-        origin: true,
+        origin: allowedOrigins,
     },
+    maxHttpBufferSize: maxSocketPayload,
 });
 
 const roomMessages = new Map();
