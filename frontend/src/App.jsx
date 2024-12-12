@@ -7,6 +7,8 @@ import ThemeToggle from './components/ThemeToggle'
 
 const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
 const strictLanOnly = import.meta.env.VITE_LAN_ONLY === 'true'
+const maxDirectMessageLength = 2000
+const maxVisibleMessages = 100
 
 function getRoomCode() {
   const match = window.location.pathname.match(/^\/room\/([^/]+)$/)
@@ -388,7 +390,15 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
     socketRef.current = socket
 
     function addIncomingMessage(chatMessage) {
-      setMessages((currentMessages) => [...currentMessages, chatMessage])
+      if (
+        !chatMessage ||
+        typeof chatMessage.message !== 'string' ||
+        chatMessage.message.length > maxDirectMessageLength
+      ) return
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        chatMessage,
+      ].slice(-maxVisibleMessages))
     }
 
     function attachDataChannel(dataChannel) {
@@ -475,10 +485,10 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       peerConnectionRef.current?.addIceCandidate(candidate).catch(() => {
         setTransportError('Could not add a network connection candidate.')
       })
-      socket.on('server-mode', ({ lanOnly }) => {
-        lanOnlyRef.current = lanOnly
-        setServerMode(lanOnly ? 'LAN-only' : 'Automatic')
-      })
+    })
+    socket.on('server-mode', ({ lanOnly }) => {
+      lanOnlyRef.current = lanOnly
+      setServerMode(lanOnly ? 'LAN-only' : 'Automatic')
     })
 
     socket.on('connect', () => {
@@ -503,6 +513,12 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
       })
     })
     socket.on('disconnect', () => setIsConnected(false))
+    socket.on('disconnect', () => {
+      peerConnectionRef.current?.close()
+      peerConnectionRef.current = null
+      dataChannelRef.current = null
+      setTransportStatus(isPrivateRoomRef.current ? 'disconnected' : 'socket')
+    })
     socket.on('room-users', (users) => {
       setRoomUsers(users)
       if (
@@ -553,7 +569,10 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
         isOwn: true,
       }
       dataChannel.send(JSON.stringify(chatMessage))
-      setMessages((currentMessages) => [...currentMessages, chatMessage])
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        chatMessage,
+      ].slice(-maxVisibleMessages))
     } else {
       if (!socketRef.current?.connected) return
       socketRef.current.emit('chat-message', {
@@ -564,7 +583,7 @@ function ChatRoom({ roomCode, theme, onToggleTheme }) {
         setMessages((currentMessages) => [
           ...currentMessages,
           { ...chatMessage, isOwn: true },
-        ])
+        ].slice(-maxVisibleMessages))
       })
     }
     setMessage('')

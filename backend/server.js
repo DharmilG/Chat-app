@@ -16,6 +16,7 @@ const activeUsers = new Map();
 const pendingInvitations = new Map();
 const privateRooms = new Map();
 const invitationLifetimeMs = 60 * 1000;
+const privateRoomLifetimeMs = 10 * 60 * 1000;
 const maxDisplayNameLength = 32;
 const maxRoomCodeLength = 32;
 const maxMessageLength = 2000;
@@ -77,6 +78,15 @@ function createPrivateRoomCode() {
 
 function createPrivateRoomAccessToken() {
     return crypto.randomBytes(16).toString("hex");
+}
+
+function cleanupPrivateRoom(roomCode) {
+    const privateRoom = privateRooms.get(roomCode);
+    if (!privateRoom) return;
+    if (privateRoom.connected.size === 0 && privateRoom.accessTokens.size === 0) {
+        privateRooms.delete(roomCode);
+        roomMessages.delete(roomCode);
+    }
 }
 
 function expireInvitation(invitationId) {
@@ -257,6 +267,10 @@ io.on("connection", (socket)=>{
             ]),
             connected: new Set(),
         });
+        setTimeout(() => {
+            privateRooms.delete(roomCode);
+            roomMessages.delete(roomCode);
+        }, privateRoomLifetimeMs);
         const sender = io.sockets.sockets.get(invitation.senderId);
         const recipient = io.sockets.sockets.get(invitation.recipientId);
         const event = {
@@ -353,9 +367,7 @@ io.on("connection", (socket)=>{
         socket.data.isPrivateRoom = false;
         for (const [privateRoomCode, privateRoom] of privateRooms) {
             privateRoom.connected.delete(socket.id);
-            if (!privateRoom.connected.size && !privateRoom.accessTokens.size) {
-                privateRooms.delete(privateRoomCode);
-            }
+            cleanupPrivateRoom(privateRoomCode);
         }
         if (roomCode) {
             removeRoomMessagesWhenEmpty(roomCode);
