@@ -16,6 +16,33 @@ const activeUsers = new Map();
 const pendingInvitations = new Map();
 const privateRooms = new Map();
 const invitationLifetimeMs = 60 * 1000;
+const maxDisplayNameLength = 32;
+const maxRoomCodeLength = 32;
+const maxMessageLength = 2000;
+const maxMessagesPerRoom = 100;
+const maxSignalDescriptionLength = 200000;
+const maxIceCandidateLength = 2000;
+const invitationWindowMs = 60 * 1000;
+const maxInvitationsPerWindow = 5;
+
+function normalizedText(value, maxLength) {
+    if (typeof value !== "string") return null;
+    const text = value.trim();
+    return text && text.length <= maxLength ? text : null;
+}
+
+function isRateLimited(socket) {
+    const now = Date.now();
+    const timestamps = (socket.data.invitationTimestamps || [])
+        .filter((timestamp) => now - timestamp < invitationWindowMs);
+    if (timestamps.length >= maxInvitationsPerWindow) {
+        socket.data.invitationTimestamps = timestamps;
+        return true;
+    }
+    timestamps.push(now);
+    socket.data.invitationTimestamps = timestamps;
+    return false;
+}
 
 function removeRoomMessagesWhenEmpty(roomCode) {
     const room = io.sockets.adapter.rooms.get(roomCode);
@@ -84,14 +111,11 @@ io.on("connection", (socket)=>{
         signaling: "local-socket",
     });
 
-    socket.on("discover-user", ({ displayName, discoverable = true }) => {
-        if (
-            typeof displayName !== "string" ||
-            typeof discoverable !== "boolean" ||
-            !displayName.trim()
-        ) return;
+    socket.on("discover-user", ({ displayName, discoverable = true } = {}) => {
+        const normalizedDisplayName = normalizedText(displayName, maxDisplayNameLength);
+        if (!normalizedDisplayName || typeof discoverable !== "boolean") return;
 
-        socket.data.displayName = displayName.trim();
+        socket.data.displayName = normalizedDisplayName;
         socket.data.discoverable = discoverable;
         activeUsers.set(socket.id, {
             id: socket.id,
@@ -102,7 +126,7 @@ io.on("connection", (socket)=>{
         broadcastDiscoverableUsers();
     });
 
-    socket.on("private-chat-request", ({ recipientId }, acknowledge) => {
+    socket.on("private-chat-request", ({ recipientId } = {}, acknowledge) => {
         const sender = activeUsers.get(socket.id);
         const recipient = activeUsers.get(recipientId);
         if (
@@ -110,6 +134,7 @@ io.on("connection", (socket)=>{
             !recipient ||
             sender.id === recipient.id ||
             !recipient.discoverable ||
+            isRateLimited(socket) ||
             pendingInvitations.values().some(
                 (invitation) =>
                     invitation.senderId === socket.id &&
@@ -139,21 +164,17 @@ io.on("connection", (socket)=>{
         acknowledge?.({ ok: true, invitationId: invitation.id });
     });
 
-    socket.on("join-room", ({ roomCode, displayName, privateAccessToken }, acknowledge) => {
-        if (
-            typeof roomCode !== "string" ||
-            typeof displayName !== "string" ||
-            !roomCode.trim() ||
-            !displayName.trim()
-        ) {
+    socket.on("join-room", ({ roomCode, displayName, privateAccessToken } = {}, acknowledge) => {
+        const normalizedRoomCode = normalizedText(roomCode, maxRoomCodeLength);
+        const normalizedDisplayName = normalizedText(displayName, maxDisplayNameLength);
+        if (!normalizedRoomCode || !normalizedDisplayName) {
             acknowledge?.({ ok: false, error: "Room code and display name are required." });
             return;
         }
 
-        const normalizedRoomCode = roomCode.trim();
         const privateParticipants = privateRooms.get(normalizedRoomCode);
         const expectedName = privateParticipants?.accessTokens.get(privateAccessToken);
-        if (privateParticipants && expectedName !== displayName.trim()) {
+        if (privateParticipants && expectedName !== normalizedDisplayName) {
             acknowledge?.({ ok: false, error: "You are not invited to this private room." });
             return;
         }
@@ -166,7 +187,7 @@ io.on("connection", (socket)=>{
         }
 
         socket.data.roomCode = normalizedRoomCode;
-        socket.data.displayName = displayName.trim();
+        socket.data.displayName = normalizedDisplayName;
         socket.data.isPrivateRoom = Boolean(privateParticipants);
         activeUsers.set(socket.id, {
             id: socket.id,
@@ -191,22 +212,34 @@ io.on("connection", (socket)=>{
         });
     });
 
-    socket.on("webrtc-offer", ({ description }) => {
-        if (description?.type !== "offer" || typeof description.sdp !== "string") return;
+    socket.on("webrtc-offer", ({ description } = {}) => {
+        if (
+            description?.type !== "offer" ||
+            typeof description.sdp !== "string" ||
+            description.sdp.length > maxSignalDescriptionLength
+        ) return;
         relayWebRtcSignal(socket, "webrtc-offer", { description });
     });
 
-    socket.on("webrtc-answer", ({ description }) => {
-        if (description?.type !== "answer" || typeof description.sdp !== "string") return;
+    socket.on("webrtc-answer", ({ description } = {}) => {
+        if (
+            description?.type !== "answer" ||
+            typeof description.sdp !== "string" ||
+            description.sdp.length > maxSignalDescriptionLength
+        ) return;
         relayWebRtcSignal(socket, "webrtc-answer", { description });
     });
 
-    socket.on("webrtc-ice-candidate", ({ candidate }) => {
-        if (!candidate || typeof candidate.candidate !== "string") return;
+    socket.on("webrtc-ice-candidate", ({ candidate } = {}) => {
+        if (
+            !candidate ||
+            typeof candidate.candidate !== "string" ||
+            candidate.candidate.length > maxIceCandidateLength
+        ) return;
         relayWebRtcSignal(socket, "webrtc-ice-candidate", { candidate });
     });
 
-    socket.on("private-chat-accept", ({ invitationId }, acknowledge) => {
+    socket.on("private-chat-accept", ({ invitationId } = {}, acknowledge) => {
         const invitation = pendingInvitations.get(invitationId);
         if (!invitation || invitation.recipientId !== socket.id) {
             acknowledge?.({ ok: false, error: "This invitation is no longer available." });
@@ -252,7 +285,7 @@ io.on("connection", (socket)=>{
         acknowledge?.({ ok: true, roomCode });
     });
 
-    socket.on("private-chat-decline", ({ invitationId }, acknowledge) => {
+    socket.on("private-chat-decline", ({ invitationId } = {}, acknowledge) => {
         const invitation = pendingInvitations.get(invitationId);
         if (!invitation || invitation.recipientId !== socket.id) {
             acknowledge?.({ ok: false, error: "This invitation is no longer available." });
@@ -267,7 +300,7 @@ io.on("connection", (socket)=>{
         acknowledge?.({ ok: true });
     });
 
-    socket.on("chat-message", ({ roomCode, displayName, message }, acknowledge) => {
+    socket.on("chat-message", ({ roomCode, displayName, message } = {}, acknowledge) => {
         if (socket.data.isPrivateRoom) {
             acknowledge?.({
                 ok: false,
@@ -275,26 +308,26 @@ io.on("connection", (socket)=>{
             });
             return;
         }
-        if (
-            typeof roomCode !== "string" ||
-            typeof displayName !== "string" ||
-            typeof message !== "string" ||
-            !roomCode.trim() ||
-            !displayName.trim() ||
-            !message.trim()
-        ) return;
+        const normalizedRoomCode = normalizedText(roomCode, maxRoomCodeLength);
+        const normalizedMessage = normalizedText(message, maxMessageLength);
+        if (!normalizedRoomCode || !normalizedMessage) {
+            acknowledge?.({ ok: false, error: "Message is invalid or too long." });
+            return;
+        }
 
-        const normalizedRoomCode = roomCode.trim();
         if (socket.data.roomCode !== normalizedRoomCode) return;
 
         const chatMessage = {
             senderId: socket.id,
             displayName: socket.data.displayName,
-            message: message.trim(),
+            message: normalizedMessage,
             timestamp: Date.now(),
         };
         const messages = roomMessages.get(normalizedRoomCode) || [];
         messages.push(chatMessage);
+        if (messages.length > maxMessagesPerRoom) {
+            messages.splice(0, messages.length - maxMessagesPerRoom);
+        }
         roomMessages.set(normalizedRoomCode, messages);
         socket.to(normalizedRoomCode).emit("chat-message", chatMessage);
         if (typeof acknowledge === "function") {
